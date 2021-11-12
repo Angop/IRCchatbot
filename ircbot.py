@@ -311,16 +311,20 @@ def mainLoop(irc, channel, botnick, chatbot):
     """
     # irc.send(channel, "Hello everyone!")
     # irc.getNames(channel)
-    def start():
-        startConvo(irc, channel, botnick, chatbot)
+    # def start():
+    #     startConvo(irc, channel, botnick, chatbot)
     
-    initConvoTimer = Timer(10, start)
-    initConvoTimer.start()
+    # initConvoTimer = Timer(10, start)
+    # initConvoTimer.start()
+    text = irc.get_response() # eat the initial junk
+    text = irc.get_response() # eat the initial junk
+    print("RECEIVED ==> ",text)
+    startConvo(irc, channel, botnick, chatbot)
     while True:
-        if not initConvoTimer and not chatbot.convoOngoing():
-            # if there's no timer going, and no conversation, set timer to start convo
-            initConvoTimer = Timer(11, start)
-            initConvoTimer.start()
+        # if not initConvoTimer and not chatbot.convoOngoing():
+        #     # if there's no timer going, and no conversation, set timer to start convo
+        #     initConvoTimer = Timer(11, start)
+        #     initConvoTimer.start()
 
         text = irc.get_response()
         print("RECEIVED ==> ",text)
@@ -344,9 +348,9 @@ def mainLoop(irc, channel, botnick, chatbot):
                 chatbot.getConvo(sender).respond(msg)
             else:
                 # new person is contacting bot for the first time, new conversation
-                if initConvoTimer:
-                    initConvoTimer.cancel()
-                    initConvoTimer = None
+                # if initConvoTimer:
+                #     initConvoTimer.cancel()
+                #     initConvoTimer = None
                 chatbot.initConversation(sender, msg)
 
 def startConvo(irc, channel, botnick, chatbot):
@@ -359,7 +363,7 @@ def startConvo(irc, channel, botnick, chatbot):
     chatbot.initConversation(name)
     return True
 
-        
+
 def initSetup():
     server = "irc.libera.chat" 	# Provide a valid server IP/Hostname
     port = 6667
