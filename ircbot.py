@@ -4,7 +4,6 @@
 # Creates a chatbot that runs on an IRC server
 
 from ctypes import c_char
-import enum
 import socket
 import sys
 import time
@@ -40,7 +39,6 @@ class IRC:
         self.irc.send(bytes(msg + "\n", "UTF-8"))
  
     def send(self, channel, msg):
-        # TODO: randomize some delay before responding, maybe gauge off the length of msg
         # Transfer data
         if "die!" not in msg:
             # Just a failsafe to prevent killing
@@ -77,6 +75,7 @@ class IRC:
         resp = self.get_response()
         print(f"NAMES RESP: \n'''{resp}'''\n")
         m = re.search(r"^:.+:(.+):?", resp)
+        # TODO: search for names indicator, if its not in there, then get response again
         names = [x[1:] if '@' in x else x for x in m[1].split(" ")]
         print("NAMES ==> " + " ".join(names))
         return names
@@ -129,12 +128,19 @@ class Chatbot:
         """
         pass
 
+    def killAllConvos(self):
+        recips = [recip for recip in self.convos]
+        for recip in recips:
+            self.killConvo(recip)
+
     def killConvo(self, recip):
         """
         Removes a conversation from the convos list
         """
         if recip in self.convos:
-            self.convos.pop(recip)
+            convo = self.convos.pop(recip)
+            if convo.timer != None:
+                convo.timer.cancel()
 
 class Conversation:
 
@@ -163,7 +169,10 @@ class Conversation:
         """
         Send specified message to recipient
         """
-        # TODO: wait for some variable amount of time before sending
+        # wait for some variable amount of time before sending
+        time.sleep(random.choice([x / 2 for x in range(2, 8)]))
+        exactText = self.recip + ": " + message
+        print(f"SENDING ==> '''{exactText}'''")
         self.irc.send(self.channel, self.recip + ": " + message)
     
     def handleTimeout(self):
@@ -171,26 +180,14 @@ class Conversation:
         30 seconds have passed while waiting for a response. Based on the current
         state, perform valid actions in response
         """
-        # TODO
         print("Time's up!")
         if self.mode == mode.GREET1:
             self.sendToRecip("...hello? Anyone there?")
             self.mode = mode.GREET2
             self.timer = Timer(30, self.handleTimeout)
             self.timer.start()
-        elif self.mode == mode.GREET2:
-            self.sendToRecip(random.choice(self.upSet))
-            self.parentBot.killConvo(self.recip)
-        elif self.mode == mode.INQUIRY1:
-            self.sendToRecip(random.choice(self.upSet))
-            self.parentBot.killConvo(self.recip)
-        elif self.mode == mode.INQUIRY1_REPLY :
-            pass
-        elif self.mode == mode.INQUIRY2:
-            # bot was expecting a reply to their inquiry, never got it
-            self.sendToRecip(random.choice(self.upSet))
-            self.parentBot.killConvo(self.recip)
-        elif self.mode == mode.INQUIRY2_REPLY:
+        else:
+            print(f"GIVE UP ==> {self.mode}")
             self.sendToRecip(random.choice(self.upSet))
             self.parentBot.killConvo(self.recip)
         # otherwise, the mode is fine, shouldn't have a timer
@@ -221,14 +218,19 @@ class Conversation:
             if self.timer is not None:
                 self.timer.cancel()
 
-        if not self.initGreeting: #and inSet(self.greetSet, text):
-            # greeting not yet complete, assume this was a greeting and respond
-            self.greet()
-            self.mode = mode.INQUIRY1 # next, they'll ask a question
 
-        elif "get usernames" in text.lower():
+        if "get usernames" in text.lower():
             names = self.irc.getNames(self.channel)
             self.sendToRecip(" ".join(names))
+
+        if not self.initGreeting:
+            # greeting not yet complete, assume this was a greeting and respond
+            if inSet(self.greetSet, text):
+                self.greet()
+                self.mode = mode.INQUIRY1 # next, they'll ask a question
+            else:
+                # First message and no hello -> ignore that, cancel conversation
+                self.parentBot.killConvo(self.recip)
         
         elif self.mode in [mode.GREET1, mode.GREET2]:
             # they replied to bot's greeting with a greeting, time to inquire
@@ -241,7 +243,6 @@ class Conversation:
         elif self.mode == mode.INQUIRY1:
             # bot expects them to ask question, need to reply to question then
             # follow up with inquiry 2
-            #TODO
             resp = random.choice(self.inqRepSet) + ("" if random.random() < 0.5 else random.choice(self.inqRepEndSet))
             self.sendToRecip(resp)
             inq = random.choice(self.inqSet2)
@@ -269,31 +270,33 @@ class Conversation:
 
         elif self.mode == mode.INQUIRY2_REPLY:
             # bot is expecting an answer, need to end now
-            #TODO
-            # response to response here? TODO
             self.mode = mode.END
             resp = random.choice(self.byeSet)
             self.sendToRecip(resp)
             self.parentBot.killConvo(self.recip)
 
         # TODO: give me a song by x author or hows the weather in x?
+        # what can you do? --> list functionality
+        # give me a song by x
+        # get top charts
 
         else:
-            # TODO: make a randomize default statement, with comprehensible
-            # potential responses. Basically like conversation starters
+            # It should never actually reach this
             defaultStatement = "Nice weather we're having"
             self.sendToRecip(defaultStatement)
-    
-    def isInquiry(self, text):
-        # TODO
-        return False
-    
 
 def main():
     ## IRC Config
     server, port, channel, botnick, botpass, botnickpass = initSetup()
     irc = IRC()
     irc.connect(server, port, channel, botnick, botpass, botnickpass)
+    time.sleep(3)
+    text = irc.get_response() # eat the initial junk
+    print("RECEIVED ==> ",text)
+    text = irc.get_response() # eat the initial junk
+    print("RECEIVED ==> ",text)
+    text = irc.get_response() # eat the initial junk
+    print("RECEIVED ==> ",text)
 
     running = True
     while running:
@@ -316,9 +319,6 @@ def mainLoop(irc, channel, botnick, chatbot):
     
     # initConvoTimer = Timer(10, start)
     # initConvoTimer.start()
-    text = irc.get_response() # eat the initial junk
-    text = irc.get_response() # eat the initial junk
-    print("RECEIVED ==> ",text)
     startConvo(irc, channel, botnick, chatbot)
     while True:
         # if not initConvoTimer and not chatbot.convoOngoing():
@@ -332,7 +332,7 @@ def mainLoop(irc, channel, botnick, chatbot):
         # TODO: ensure botnick is first item in text
         if "PRIVMSG" in text and channel in text and botnick + ":" in text:
             # Bot is direcly mentioned, must respond
-            sender = re.search(r".*~(.*)@", text)[1]
+            sender = re.search(r".*:(.*)!", text)[1]
             m = re.search(r"PRIVMSG.*:(.*)", text)
             msg = m[1]
             print(f"\tSENDER ==> {sender}\n\tMESSAGE ==> {msg}")
@@ -342,6 +342,8 @@ def mainLoop(irc, channel, botnick, chatbot):
                 return False
             elif "forget!" in msg:
                 irc.send(channel, "...")
+                # CANCEL TIMERS BEFORE FORGETTING!
+                chatbot.killAllConvos()
                 return True
             elif chatbot.existingConvo(sender):
                 # continuing existing conversation
@@ -359,7 +361,6 @@ def startConvo(irc, channel, botnick, chatbot):
     if len(names) == 0:
         return False
     name = random.choice(names)
-    # name = "Guest82" # TODO: make actually random
     chatbot.initConversation(name)
     return True
 
