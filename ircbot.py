@@ -134,13 +134,17 @@ class Chatbot:
         pass
 
     def killAllConvos(self):
+        """
+        Kills all the ongoing conversations
+        """
         recips = [recip for recip in self.convos]
         for recip in recips:
             self.killConvo(recip)
 
     def killConvo(self, recip):
         """
-        Removes a conversation from the convos list
+        Removes a conversation from the convos list and cancels the associated
+        timers
         """
         if recip in self.convos:
             convo = self.convos.pop(recip)
@@ -170,7 +174,7 @@ class Conversation:
 
         self.songWords = ["song", "track"]
         self.artistWords = ["artist", "author", "by"]
-        self.requestWords = ["what", "whats", "what's", "get"]
+        self.requestWords = ["what", "whats", "what's", "get", "send", "find"]
         self.topCharts = ["top", "charts", "songs", "popular"]
 
         print(f"NEW CONVERSATION WITH {recip}")
@@ -191,6 +195,7 @@ class Conversation:
         state, perform valid actions in response
         """
         print("Time's up!")
+        print(f"STATE: {self.mode}")
         if self.mode == mode.GREET1:
             self.sendToRecip("...hello? Anyone there?")
             self.mode = mode.GREET2
@@ -230,11 +235,41 @@ class Conversation:
 
         tokText = text.lower().split()
 
+        print(f"MODE: {self.mode}")
+
         if "get usernames" in text.lower():
             names = self.irc.getNames(self.channel, self.parentBot.botnick)
             self.sendToRecip(" ".join(names))
 
-        if not self.initGreeting:
+        elif (self.mode == mode.END or not self.initGreeting) and inSet(self.requestWords, text) and inSet(self.topCharts, text):
+            # get top charts
+            for line in self.parentBot.yt.topChartsQuery(5):
+                self.sendToRecip(line)
+            self.mode == mode.END
+
+        elif (self.mode == mode.END or not self.initGreeting) and "random" in text and inSet(self.requestWords, text) and\
+            (inSet(self.artistWords, text) or inSet(self.songWords, text)):
+            # give me a random song by x author
+            filterOut(["random"] + self.songWords + self.artistWords + self.requestWords, tokText)
+            query = " ".join(tokText)
+            for line in self.parentBot.yt.randomSongQuery(query):
+                self.sendToRecip(line)
+            self.mode == mode.END
+
+        elif (self.mode == mode.END or not self.initGreeting) and inSet(self.requestWords, text) and\
+            (inSet(self.artistWords, text) or inSet(self.songWords, text)):
+            # get information on a given song
+            filterOut(self.songWords + self.artistWords + self.requestWords, tokText)
+            query = " ".join(tokText)
+            for line in self.parentBot.yt.generalQuery(query):
+                self.sendToRecip(line)
+            self.mode == mode.END
+
+        # TODO: get information on a given artist
+        # TODO: get information on a given album
+        # TODO: what can you do? --> list functionality
+
+        elif not self.initGreeting:
             # greeting not yet complete, assume this was a greeting and respond
             if inSet(self.greetSet, text):
                 self.greet()
@@ -286,31 +321,7 @@ class Conversation:
             # self.sendToRecip(resp)
             # self.parentBot.killConvo(self.recip)
         
-        elif self.mode == mode.END and inSet(self.requestWords, text) and inSet(self.topCharts, text):
-            # TODO: get top charts
-            for line in self.parentBot.yt.topChartsQuery(5):
-                self.sendToRecip(line)
 
-        elif self.mode == mode.END and "random" in text and inSet(self.requestWords, text) and\
-            (inSet(self.artistWords, text) or inSet(self.songWords, text)):
-            # TODO: give me a random song by x author
-            filterOut(["random"] + self.songWords + self.artistWords + self.requestWords, tokText)
-            query = " ".join(tokText)
-            for line in self.parentBot.yt.randomSongQuery(query):
-                self.sendToRecip(line)
-
-
-        elif self.mode == mode.END and inSet(self.requestWords, text) and\
-            (inSet(self.artistWords, text) or inSet(self.songWords, text)):
-            # get information on a given song
-            filterOut(self.songWords + self.artistWords + self.requestWords, tokText)
-            query = " ".join(tokText)
-            for line in self.parentBot.yt.generalQuery(query):
-                self.sendToRecip(line)
-
-        # TODO: get information on a given artist
-        # TODO: get information on a given album
-        # TODO: what can you do? --> list functionality
 
         else:
             # It should never actually reach this
@@ -372,6 +383,9 @@ def mainLoop(irc, channel, botnick, chatbot):
                     chatbot.initConversation(sender, msg)
 
 def startConvo(irc, channel, botnick, chatbot):
+    """
+    Initiates a conversation with a random person in the chatroom
+    """
     rawnames = irc.getNames(channel, botnick)
     names =[x for x in rawnames if x != botnick]
     if len(names) == 0:
@@ -382,6 +396,9 @@ def startConvo(irc, channel, botnick, chatbot):
 
 
 def initSetup():
+    """
+    Initial setup of the irc side
+    """
     server = "irc.libera.chat" 	# Provide a valid server IP/Hostname
     port = 6667
     channel = "#CSC482"
