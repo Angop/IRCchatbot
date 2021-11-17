@@ -14,12 +14,12 @@ class Timer:
     
     def start(self):
         # starts the timer
-        print(f"Timer started for {self.time} seconds")
+        print(f"...Timer started for {self.time} seconds...")
         self.t = threading.Timer(self.time, self.event)
         self.t.start()
 
     def cancel(self):
-        # TODO
+        print(f"...Timer for {self.time} seconds canceled...")
         if self.t == None:
             # timer wasn't started yet
             return

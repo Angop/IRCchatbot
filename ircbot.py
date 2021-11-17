@@ -11,6 +11,7 @@ import os
 import random
 import re
 from enum import Enum
+from ytInter import YT
 
 from timerInterrupt import Timer
 
@@ -68,17 +69,20 @@ class IRC:
  
         return resp
     
-    def getNames(self, channel):
+    def getNames(self, channel, botname):
         print("REQUESTING NAMES...")
         self.command("NAMES " + channel)
+        time.sleep(1)
         print("RECV NAMES...")
         resp = self.get_response()
         print(f"NAMES RESP: \n'''{resp}'''\n")
-        m = re.search(r"^:.+:(.+):?", resp)
-        # TODO: search for names indicator, if its not in there, then get response again
-        names = [x[1:] if '@' in x else x for x in m[1].split(" ")]
-        print("NAMES ==> " + " ".join(names))
-        return names
+        for line in resp.split("\n"):
+            m = re.search(r"^:.+:(.+)", line)
+            if botname in line and m:
+                names = [x.strip().strip("@") for x in m[1].split(" ") if len(x) > 0]
+                print("NAMES ==> " + " ".join(names))
+                return names
+        return []
 
 class Chatbot:
 
@@ -88,6 +92,7 @@ class Chatbot:
         self.botnick = botnick
         self.convos = dict([]) # ongoing list of conversations indexed by the target username
         self.maxConvos = 1
+        self.yt = YT()
     
     def initConversation(self, recip, text=""):
         """
@@ -163,6 +168,11 @@ class Conversation:
         self.upSet = ["Whatever.", "I'm done. Bye I guess", "I give up", "Fine. Don't answer", "Whatever man"]
         self.timer = None
 
+        self.songWords = ["song", "track"]
+        self.artistWords = ["artist", "author", "by"]
+        self.requestWords = ["what", "whats", "what's", "get"]
+        self.topCharts = ["top", "charts", "songs", "popular"]
+
         print(f"NEW CONVERSATION WITH {recip}")
     
     def sendToRecip(self, message):
@@ -218,9 +228,10 @@ class Conversation:
             if self.timer is not None:
                 self.timer.cancel()
 
+        tokText = text.lower().split()
 
         if "get usernames" in text.lower():
-            names = self.irc.getNames(self.channel)
+            names = self.irc.getNames(self.channel, self.parentBot.botnick)
             self.sendToRecip(" ".join(names))
 
         if not self.initGreeting:
@@ -264,25 +275,46 @@ class Conversation:
             resp = random.choice(self.inqRepSet) + ("" if random.random() < 0.5 else random.choice(self.inqRepEndSet))
             self.sendToRecip(resp)
             self.mode = mode.END
-            resp = random.choice(self.byeSet)
-            self.sendToRecip(resp)
-            self.parentBot.killConvo(self.recip)
+            # resp = random.choice(self.byeSet)
+            # self.sendToRecip(resp)
+            # self.parentBot.killConvo(self.recip)
 
         elif self.mode == mode.INQUIRY2_REPLY:
             # bot is expecting an answer, need to end now
             self.mode = mode.END
-            resp = random.choice(self.byeSet)
-            self.sendToRecip(resp)
-            self.parentBot.killConvo(self.recip)
+            # resp = random.choice(self.byeSet)
+            # self.sendToRecip(resp)
+            # self.parentBot.killConvo(self.recip)
+        
+        elif self.mode == mode.END and inSet(self.requestWords, text) and inSet(self.topCharts, text):
+            # TODO: get top charts
+            for line in self.parentBot.yt.topChartsQuery(5):
+                self.sendToRecip(line)
 
-        # TODO: give me a song by x author or hows the weather in x?
-        # what can you do? --> list functionality
-        # give me a song by x
-        # get top charts
+        elif self.mode == mode.END and "random" in text and inSet(self.requestWords, text) and\
+            (inSet(self.artistWords, text) or inSet(self.songWords, text)):
+            # TODO: give me a random song by x author
+            filterOut(["random"] + self.songWords + self.artistWords + self.requestWords, tokText)
+            query = " ".join(tokText)
+            for line in self.parentBot.yt.randomSongQuery(query):
+                self.sendToRecip(line)
+
+
+        elif self.mode == mode.END and inSet(self.requestWords, text) and\
+            (inSet(self.artistWords, text) or inSet(self.songWords, text)):
+            # get information on a given song
+            filterOut(self.songWords + self.artistWords + self.requestWords, tokText)
+            query = " ".join(tokText)
+            for line in self.parentBot.yt.generalQuery(query):
+                self.sendToRecip(line)
+
+        # TODO: get information on a given artist
+        # TODO: get information on a given album
+        # TODO: what can you do? --> list functionality
 
         else:
             # It should never actually reach this
-            defaultStatement = "Nice weather we're having"
+            defaultStatement = "Sorry, I don't understand!"
             self.sendToRecip(defaultStatement)
 
 def main():
@@ -312,51 +344,35 @@ def mainLoop(irc, channel, botnick, chatbot):
     This is the primary loop of the state machine. Returns False when dead,
     returns True when forgets
     """
-    # irc.send(channel, "Hello everyone!")
-    # irc.getNames(channel)
-    # def start():
-    #     startConvo(irc, channel, botnick, chatbot)
-    
-    # initConvoTimer = Timer(10, start)
-    # initConvoTimer.start()
     startConvo(irc, channel, botnick, chatbot)
     while True:
-        # if not initConvoTimer and not chatbot.convoOngoing():
-        #     # if there's no timer going, and no conversation, set timer to start convo
-        #     initConvoTimer = Timer(11, start)
-        #     initConvoTimer.start()
-
         text = irc.get_response()
-        print("RECEIVED ==> ",text)
+        for line in text.split("\n"):
+            print("RECEIVED ==> ",line)
 
-        # TODO: ensure botnick is first item in text
-        if "PRIVMSG" in text and channel in text and botnick + ":" in text:
-            # Bot is direcly mentioned, must respond
-            sender = re.search(r".*:(.*)!", text)[1]
-            m = re.search(r"PRIVMSG.*:(.*)", text)
-            msg = m[1]
-            print(f"\tSENDER ==> {sender}\n\tMESSAGE ==> {msg}")
+            m = re.search(r"PRIVMSG.*" + channel + " :(.*)", line)
+            if "PRIVMSG" in line and channel in line and (m[1].find(botnick + ":") == 0):
+                # Bot is direcly mentioned, must respond
+                sender = line[line.find(":") + 1:line.find("!")]
+                msg = m[1][len(botnick) + 1:]
+                print(f"\tSENDER ==> {sender}\n\tMESSAGE ==> {msg}")
 
-            if "die!" in msg:
-                irc.send(channel, "*dies*")
-                return False
-            elif "forget!" in msg:
-                irc.send(channel, "...")
-                # CANCEL TIMERS BEFORE FORGETTING!
-                chatbot.killAllConvos()
-                return True
-            elif chatbot.existingConvo(sender):
-                # continuing existing conversation
-                chatbot.getConvo(sender).respond(msg)
-            else:
-                # new person is contacting bot for the first time, new conversation
-                # if initConvoTimer:
-                #     initConvoTimer.cancel()
-                #     initConvoTimer = None
-                chatbot.initConversation(sender, msg)
+                if "die!" in msg:
+                    irc.send(channel, "*dies*")
+                    return False
+                elif "forget!" in msg:
+                    irc.send(channel, "...")
+                    chatbot.killAllConvos()
+                    return True
+                elif chatbot.existingConvo(sender):
+                    # continuing existing conversation
+                    chatbot.getConvo(sender).respond(msg)
+                else:
+                    # new person is contacting bot for the first time, new conversation
+                    chatbot.initConversation(sender, msg)
 
 def startConvo(irc, channel, botnick, chatbot):
-    rawnames = irc.getNames(channel)
+    rawnames = irc.getNames(channel, botnick)
     names =[x for x in rawnames if x != botnick]
     if len(names) == 0:
         return False
@@ -384,6 +400,14 @@ def inSet(s, text):
         if i in lowText:
             return True
     return False
+
+def filterOut(s, tokText):
+    """
+    Removes the words in s (a set or list) found in tokText (a list)
+    """
+    for w in s:
+        if w in tokText:
+            tokText.remove(w)
 
 if __name__ == "__main__":
     main()
